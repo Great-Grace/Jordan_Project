@@ -1,0 +1,91 @@
+from pathlib import Path
+import pandas as pd
+from matplotlib import pyplot as plt
+from functools import reduce
+import numpy as np
+
+# Data Management
+current_file_path = Path(__file__)
+project_root = current_file_path.parent
+
+def get_data_path(dataname):
+    data_path = project_root / 'data' / dataname
+    return data_path
+
+def get_Jordan_row(dataname, skiprow, start, end):
+    get_data_path(dataname)
+    tmp = pd.read_csv(get_data_path(dataname), skiprows = skiprow, sep = ',')
+    tmp = tmp[tmp['Country Name'] == 'Jordan']
+    tmp = tmp.loc[:, start:end].copy()
+    return tmp
+
+def transform_data(df_wide, col_name):
+    df_long = df_wide.T
+    df_long = df_long.reset_index()
+    df_long.columns = ['Year', col_name]
+    df_long['Year'] = df_long['Year'].astype(int)
+    return df_long
+
+# Jordan Refugees from Syria data
+Jordan_Refugees_org = pd.read_csv(get_data_path('WorldBank_Jordan_Refugees.csv'))
+Jordan_Refugees = Jordan_Refugees_org.loc[:, ['Year', 'Refugees']].copy()
+
+# Jordan Total Water Resource data
+Jordan_Water_org = pd.read_csv(get_data_path('WorldBank_totalWater.csv'))
+Jordan_Water = Jordan_Water_org[Jordan_Water_org['REF_AREA_LABEL'] == 'Jordan']
+Jordan_Water = Jordan_Water.iloc[0].fillna(Jordan_Water.iloc[1])
+Jordan_Water = Jordan_Water.to_frame(name = 'Water')
+Jordan_Water = Jordan_Water.reset_index()
+Jordan_Water.columns = ['Year', 'Water']
+Jordan_Water = Jordan_Water.set_index('Year')
+Jordan_Water = Jordan_Water.loc['2000':'2020']
+Jordan_Water.reset_index(inplace = True)
+Jordan_Water['Year'] = Jordan_Water['Year'].astype(int)
+
+data_dictionary = {
+    'WorldBank_GDP.csv' : 'GDP',
+    'WorldBank_gdpGrowth.csv' : 'gdpGrowth',
+    'WorldBank_Inflation.csv' : 'Inflation',
+    'WorldBank_Unemployment.csv' : 'Unemployment',
+}
+
+merge_data = []
+for filename, col_name in data_dictionary.items():
+    Jordan_wide = get_Jordan_row(filename, 4, '2000', '2020')
+    Jordan_long = transform_data(Jordan_wide, col_name)
+    merge_data.append(Jordan_long)
+
+merge_data.append(Jordan_Refugees)
+merge_data.append(Jordan_Water)
+
+Jordan_indexes = reduce(lambda left, right: pd.merge(left, right, on = 'Year', how = 'outer'), merge_data)
+
+print(Jordan_indexes)
+
+# Visualizing
+
+Jordan_indexes['GDP'] = np.log(Jordan_indexes['GDP'])
+Jordan_indexes = Jordan_indexes.rename(columns={'GDP' : 'GDP_log'})
+Jordan_long = pd.melt(Jordan_indexes, id_vars = ['Year'], var_name = 'indicator', value_name = 'value')
+indicator_list = Jordan_long['indicator'].unique()
+
+fig, axs = plt.subplots(nrows = 2,ncols = 3, figsize = (12, 8))
+for ax, indicator in zip(axs.flatten(), indicator_list):
+    plot_data = Jordan_long[Jordan_long['indicator'] == indicator]
+    ax.plot(plot_data['Year'], plot_data['value'])
+    ax.set_title(indicator)
+    ax.axvline(x=2011, color='red', linestyle='--', linewidth=1.5, label='Syrian Civil War Start')
+
+handles, labels = axs[0][0].get_legend_handles_labels()
+fig.legend(handles, labels, loc='upper left', bbox_to_anchor=(0.01, 0.99))
+fig.subplots_adjust(
+    left=0.1,      # 왼쪽 여백
+    right=0.9,     # 오른쪽 여백
+    top=0.9,      # 위쪽 여백 (suptitle과의 간격 확보)
+    bottom=0.05,   # 아래쪽 여백
+    wspace=0.3,    # 서브플롯 좌우 간격
+    hspace=0.4     # 서브플롯 상하 간격
+)
+
+plt.savefig('Jordan_indexes.png')
+plt.show()
